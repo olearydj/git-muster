@@ -1,0 +1,49 @@
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "git-muster"
+version = "0.2.1"
+description = "See every local Git branch and what needs attention"
+readme = "README.md"
+requires-python = ">=3.13,<3.15"
+license = "MIT"
+authors = [{ name = "Dan O'Leary" }]
+dependencies = ["rich>=14,<15", "typer>=0.27,<0.28"]
+
+[project.scripts]
+git-muster = "git_muster.cli:entrypoint"
+gm = "git_muster.cli:entrypoint"
+
+[project.urls]
+Homepage = "https://github.com/olearydj/git-muster"
+Repository = "https://github.com/olearydj/git-muster"
+
+[dependency-groups]
+dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.12,<1", "ty>=0.0.1a20"]
+
+[tool.uv]
+# Keep the cooldown in the project because uv records it in uv.lock.
+exclude-newer = "3 days"
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.coverage.run]
+branch = true
+source = ["git_muster"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.ty.src]
+include = ["src"]
