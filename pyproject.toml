@@ -9,7 +9,18 @@ description = "See every local Git branch and what needs attention"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Dan O'Leary" }]
+keywords = ["branch", "cli", "git", "github", "worktree"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Version Control :: Git",
+]
 dependencies = ["rich>=14,<15", "typer>=0.27,<0.28"]
 
 [project.scripts]
@@ -19,6 +30,7 @@ gm = "git_muster.cli:entrypoint"
 [project.urls]
 Homepage = "https://github.com/olearydj/git-muster"
 Repository = "https://github.com/olearydj/git-muster"
+Issues = "https://github.com/olearydj/git-muster/issues"
 
 [dependency-groups]
 dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.12,<1", "ty>=0.0.1a20"]

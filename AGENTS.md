@@ -17,6 +17,11 @@
 - `tests/`: offline tests using temporary Git repositories or command stubs.
 - `README.md`: installation, usage, and behavioral boundaries.
 
+## Handoff and context
+
+- Keep transient restart state, current progress, blockers, and verification results in ignored `.ho/` notes created through the handoff skill.
+- Add `PROJECT_CONTEXT.md` only when stable decisions, recurring pitfalls, or a durable source map outgrow this file and the README. Keep it short and do not use it as a task tracker or session transcript.
+
 ## Verification
 
 ```console
