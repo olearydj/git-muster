@@ -27,3 +27,7 @@ git diff --check
 Keep the change focused and inspect the complete diff before committing. Do not include local environments, caches, build artifacts, transient `.ho/` notes, unrelated cleanup, or changes made only to exercise Git Muster against another repository.
 
 In the pull-request description, explain what changed, why it helps, and how it was verified. If the report layout changes, include a representative terminal capture or plain-text sample.
+
+## Releases
+
+Release tags must match the version in `pyproject.toml`. Publishing a GitHub release automatically rebuilds and verifies that tag, then publishes the resulting wheel and source distribution through PyPI Trusted Publishing. The manual workflow input exists only to publish or retry an existing release tag; never add a long-lived PyPI token.
