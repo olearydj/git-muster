@@ -5,7 +5,7 @@
 ## Boundaries
 
 - Keep the default command a compact, one-shot report rather than an interactive Git client.
-- Preserve exact configured-upstream ahead/behind semantics.
+- Preserve configured upstream and publication as separate internal relationships; report ahead/behind against the push destination or matching remote branch.
 - Keep GitHub PR data optional through the `gh` CLI.
 - Do not add branch deletion, switching, merging, rebasing, pushing, configuration files, or a plugin system without an explicit scope change.
 - The only default repository mutation is `git fetch --all --prune`; `--no-fetch` must remain fully read-only.

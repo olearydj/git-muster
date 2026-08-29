@@ -2,7 +2,9 @@
 
 Every branch, present and accounted for.
 
-`git-muster` is a small, read-only command-line report for local Git branches. It shows the current worktree, configured upstreams, unpublished branches, ahead/behind state, recent activity, and associated GitHub pull requests.
+`git-muster` is a small, read-only command-line report for local Git branches. It shows the current worktree, publication state, recent activity, linked worktrees, and associated GitHub pull requests.
+
+Publication is deliberately separate from Git's configured upstream. A branch is recognized as published when it has a push destination or a matching remote branch, even if it has no upstream or tracks a local parent branch. The report keeps the upstream relationship internally but uses the publication relationship for its compact `REMOTE` and `STATE` columns.
 
 ## Install
 
@@ -39,7 +41,9 @@ git-muster --help
 git-muster --version
 ```
 
-GitHub pull-request information is optional. When an authenticated [GitHub CLI](https://cli.github.com/) is available, the report adds PR state; all Git information works without it.
+GitHub pull-request information is optional. When an authenticated [GitHub CLI](https://cli.github.com/) is available, the report distinguishes draft, open, approved, changes-requested, merged, and closed pull requests. PR numbers are clickable in supported interactive terminals; all Git information works without `gh`.
+
+When a branch is checked out in another linked worktree, a compact `WORKTREE` column appears. Git Muster reports that association but does not inspect or manage the other worktree.
 
 ## Development
 
