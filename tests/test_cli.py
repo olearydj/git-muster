@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -163,7 +164,8 @@ def test_outside_repository_is_actionable(
 
 def test_help_explains_usage_states_and_effects() -> None:
     result = runner.invoke(cli.app, ["--help"])
-    help_text = " ".join(result.stdout.split())
+    unstyled = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    help_text = " ".join(unstyled.split())
 
     assert result.exit_code == 0
     assert "Inspect every local branch" in help_text
