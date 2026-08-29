@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Install project and development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Test
+        run: uv run --locked pytest
+
+      - name: Check formatting
+        run: uv run --locked ruff format --check .
+
+      - name: Lint
+        run: uv run --locked ruff check .
+
+      - name: Type check
+        run: uv run --locked ty check
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Confirm lockfile stability
+        run: git diff --exit-code -- uv.lock
+
+      - name: Check whitespace
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            base="${{ github.event.before }}"
+          else
+            base="$(git hash-object -t tree /dev/null)"
+          fi
+          git diff --check "$base" HEAD
