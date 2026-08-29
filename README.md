@@ -1,6 +1,7 @@
 # git-muster
 
 [![CI](https://github.com/olearydj/git-muster/actions/workflows/ci.yml/badge.svg)](https://github.com/olearydj/git-muster/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/git-muster?logo=pypi&logoColor=white)](https://pypi.org/project/git-muster/)
 [![Python 3.13–3.14](https://img.shields.io/badge/python-3.13%E2%80%933.14-blue.svg)](https://www.python.org/)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -44,11 +45,13 @@ BRANCH (4 local)      REMOTE  STATE          WORKTREE       UPDATED  PULL REQUES
 
 ## Install
 
-Install the latest version directly from GitHub:
+Install the latest release from PyPI:
 
 ```console
-uv tool install git+https://github.com/olearydj/git-muster.git
+uv tool install git-muster
 ```
+
+Use `uv tool upgrade git-muster` to update an existing installation.
 
 The installed commands are equivalent:
 
