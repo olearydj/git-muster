@@ -43,7 +43,7 @@ git-muster --version
 
 GitHub pull-request information is optional. When an authenticated [GitHub CLI](https://cli.github.com/) is available, the report distinguishes draft, open, approved, changes-requested, merged, and closed pull requests. PR numbers are clickable in supported interactive terminals; all Git information works without `gh`.
 
-When a branch is checked out in another linked worktree, a compact `WORKTREE` column appears. Git Muster reports that association but does not inspect or manage the other worktree.
+When a branch is checked out in another linked worktree, a compact `WORKTREE` column appears and a conditional detail block lists the checkout path. Git Muster reports those associations but does not inspect or manage the other worktrees.
 
 ## Development
 

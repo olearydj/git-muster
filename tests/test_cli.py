@@ -124,8 +124,10 @@ def test_report_combines_worktree_branch_and_pr_state(
     assert "= in sync" in captured.out
     assert "WORKTREE" in captured.out
     assert "linked-main" in captured.out
+    assert "1 other linked worktree:" in captured.out
+    assert f"main -> {tmp_path / 'linked-main'}" in captured.out
     assert "1 with unpushed commits" in captured.out
-    assert "1 never published" in captured.out
+    assert "1 local only" in captured.out
     assert "?? notes.txt" in captured.out
 
 
@@ -173,6 +175,8 @@ def test_help_explains_usage_states_and_effects() -> None:
     assert "│" in result.stdout
     assert "local only" in help_text
     assert "remote gone" in help_text
+    assert "Linked worktrees" in help_text
+    assert "checkout paths" in help_text
     assert "Effects" in help_text
     assert "git fetch --all --prune" in help_text
 
@@ -184,7 +188,7 @@ def test_short_help_flag_and_version() -> None:
     assert help_result.exit_code == 0
     assert "Report options" in help_result.stdout
     assert version_result.exit_code == 0
-    assert version_result.stdout == "git-muster 0.3.0\n"
+    assert version_result.stdout == "git-muster 0.3.1\n"
 
 
 def test_typer_interface_passes_report_options(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,7 +225,7 @@ def test_hyperlink_is_only_emitted_when_enabled() -> None:
     url = "https://github.example/pull/42"
     assert cli.hyperlink("#42", url, enabled=False) == "#42"
     assert cli.hyperlink("#42", url, enabled=True) == (
-        "\033]8;;https://github.example/pull/42\033\\#42\033]8;;\033\\"
+        "\033]8;;https://github.example/pull/42\033\\\033[4m#42\033[24m\033]8;;\033\\"
     )
 
 

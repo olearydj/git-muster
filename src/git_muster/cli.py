@@ -40,6 +40,11 @@ EPILOG = """
   [cyan]git muster --plain[/cyan]
   Emit stable ASCII output without color for logs and pipes.
 
+[bold]Linked worktrees[/bold]
+
+The [cyan]WORKTREE[/cyan] column appears only when another checkout holds a branch. Full
+checkout paths follow the branch table; other worktrees are not inspected or changed.
+
 [bold]Effects[/bold]
 
 The default run executes [cyan]git fetch --all --prune[/cyan]. It never switches, deletes,
@@ -155,13 +160,15 @@ class Branch:
     pull_request: PullRequest
     is_current: bool
     worktree: str
+    worktree_path: str
 
 
 def hyperlink(text: str, url: str, *, enabled: bool) -> str:
     """Make text clickable with an OSC 8 link on a capable interactive terminal."""
     if not enabled or not url:
         return text
-    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+    underlined = f"\033[4m{text}\033[24m"
+    return f"\033]8;;{url}\033\\{underlined}\033]8;;\033\\"
 
 
 def pull_request_status(row: dict[str, object]) -> str:
@@ -435,6 +442,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
                 pull_request=pull_requests.get(name, PullRequest("-", dim)),
                 is_current=name == current,
                 worktree=linked_worktree,
+                worktree_path=worktree_path if linked_worktree else "",
             )
         )
 
@@ -552,6 +560,13 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         print(row)
 
     print(dim(glyph["rule"] * total_width))
+    linked_worktrees = [branch for branch in branches if branch.worktree_path]
+    if linked_worktrees:
+        suffix = "" if len(linked_worktrees) == 1 else "s"
+        print(bold(f"{len(linked_worktrees)} other linked worktree{suffix}:"))
+        for branch in linked_worktrees:
+            print(f"  {branch.name} {dim('->')} {dim(branch.worktree_path)}")
+
     if dirty_lines:
         suffix = "" if len(dirty_lines) == 1 else "s"
         print(yellow(f"{len(dirty_lines)} uncommitted path{suffix}:"))
@@ -568,7 +583,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     if behind_count:
         counts.append(f"{behind_count} behind")
     if unpublished:
-        counts.append(f"{unpublished} never published")
+        counts.append(f"{unpublished} local only")
     if remote_gone:
         counts.append(f"{remote_gone} remote gone")
     if counts:

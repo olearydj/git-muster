@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "git-muster"
-version = "0.3.0"
+version = "0.3.1"
 description = "See every local Git branch and what needs attention"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
