@@ -47,6 +47,11 @@ def make_repository(tmp_path: Path) -> Path:
     readme.write_text("example\nfeature\nlocal commit\n")
     run_git(repository, "commit", "-am", "continue report")
     run_git(repository, "branch", "scratch", "main")
+    run_git(repository, "config", "branch.scratch.remote", ".")
+    run_git(repository, "config", "branch.scratch.merge", "refs/heads/main")
+    run_git(repository, "branch", "published", "main")
+    run_git(repository, "push", "origin", "published:published")
+    run_git(repository, "worktree", "add", str(tmp_path / "linked-main"), "main")
     (repository / "notes.txt").write_text("not committed\n")
     return repository
 
@@ -90,7 +95,16 @@ def test_report_combines_worktree_branch_and_pr_state(
                 "state": "OPEN",
                 "isDraft": True,
                 "reviewDecision": "",
-            }
+                "url": "https://github.example/pull/42",
+            },
+            {
+                "headRefName": "published",
+                "number": 43,
+                "state": "OPEN",
+                "isDraft": False,
+                "reviewDecision": "CHANGES_REQUESTED",
+                "url": "https://github.example/pull/43",
+            },
         ],
     )
 
@@ -103,8 +117,13 @@ def test_report_combines_worktree_branch_and_pr_state(
     assert "feature/report" in captured.out
     assert "^ ahead 1" in captured.out
     assert "#42 draft" in captured.out
+    assert "#43 changes requested" in captured.out
     assert "scratch" in captured.out
     assert ". local only" in captured.out
+    assert "published" in captured.out
+    assert "= in sync" in captured.out
+    assert "WORKTREE" in captured.out
+    assert "linked-main" in captured.out
     assert "1 with unpushed commits" in captured.out
     assert "1 never published" in captured.out
     assert "?? notes.txt" in captured.out
@@ -153,6 +172,7 @@ def test_help_explains_usage_states_and_effects() -> None:
     assert "Meaning" in help_text
     assert "│" in result.stdout
     assert "local only" in help_text
+    assert "remote gone" in help_text
     assert "Effects" in help_text
     assert "git fetch --all --prune" in help_text
 
@@ -164,7 +184,7 @@ def test_short_help_flag_and_version() -> None:
     assert help_result.exit_code == 0
     assert "Report options" in help_result.stdout
     assert version_result.exit_code == 0
-    assert version_result.stdout == "git-muster 0.2.1\n"
+    assert version_result.stdout == "git-muster 0.3.0\n"
 
 
 def test_typer_interface_passes_report_options(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,3 +200,58 @@ def test_typer_interface_passes_report_options(monkeypatch: pytest.MonkeyPatch) 
 
     assert result.exit_code == 0
     assert received == {"no_fetch": True, "plain": True}
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"isDraft": True, "state": "OPEN"}, "draft"),
+        ({"state": "OPEN", "reviewDecision": "APPROVED"}, "approved"),
+        ({"state": "OPEN", "reviewDecision": "CHANGES_REQUESTED"}, "changes requested"),
+        ({"state": "OPEN", "reviewDecision": ""}, "open"),
+        ({"state": "MERGED"}, "merged"),
+        ({"state": "CLOSED"}, "closed"),
+    ],
+)
+def test_pull_request_status(row: dict[str, object], expected: str) -> None:
+    assert cli.pull_request_status(row) == expected
+
+
+def test_hyperlink_is_only_emitted_when_enabled() -> None:
+    url = "https://github.example/pull/42"
+    assert cli.hyperlink("#42", url, enabled=False) == "#42"
+    assert cli.hyperlink("#42", url, enabled=True) == (
+        "\033]8;;https://github.example/pull/42\033\\#42\033]8;;\033\\"
+    )
+
+
+def test_publication_is_independent_of_a_local_upstream() -> None:
+    publication, counts, gone = cli.publication_for(
+        "topic",
+        "main",
+        "[ahead 1]",
+        "",
+        "",
+        {"origin/topic"},
+        {"origin"},
+    )
+
+    assert publication == "origin/topic"
+    assert counts == (0, 0)
+    assert gone is False
+
+
+def test_missing_same_name_remote_is_not_reported_as_local_only() -> None:
+    publication, counts, gone = cli.publication_for(
+        "topic",
+        "origin/topic",
+        "[gone]",
+        "",
+        "",
+        set(),
+        {"origin"},
+    )
+
+    assert publication == "origin/topic"
+    assert counts is None
+    assert gone is True

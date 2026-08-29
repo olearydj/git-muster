@@ -24,7 +24,7 @@ from git_muster import __version__
 HELP = (
     "Inspect every local branch in the current Git repository. Git Muster separates "
     "uncommitted work from committed branch state, then shows which branches are "
-    "unpublished, ahead, behind, or diverged from their configured upstream. When the "
+    "unpublished, ahead, behind, or diverged from their remote branch. When the "
     "GitHub CLI is authenticated, pull-request state appears in the same report."
 )
 
@@ -57,11 +57,12 @@ def branch_states_table() -> Table:
     )
     table.add_column("State", no_wrap=True)
     table.add_column("Meaning")
-    table.add_row("[green]in sync[/green]", "Local and configured upstream tips agree.")
+    table.add_row("[green]in sync[/green]", "Local and remote branch tips agree.")
     table.add_row("[yellow]ahead N[/yellow]", "N local commits have not been pushed.")
-    table.add_row("[blue]behind N[/blue]", "N upstream commits are missing locally.")
+    table.add_row("[blue]behind N[/blue]", "N remote commits are missing locally.")
     table.add_row("[red]ahead N, behind M[/red]", "The histories have diverged.")
-    table.add_row("[dim]local only[/dim]", "The branch has no configured upstream.")
+    table.add_row("[red]remote gone[/red]", "The configured push branch no longer exists.")
+    table.add_row("[dim]local only[/dim]", "No push destination or matching remote branch exists.")
     return table
 
 
@@ -135,6 +136,8 @@ class PullRequest:
 
     text: str
     colour: Callable[[str], str]
+    number: int | None = None
+    url: str = ""
 
 
 @dataclass(frozen=True)
@@ -142,13 +145,89 @@ class Branch:
     """Collected status for one local branch."""
 
     name: str
-    tracking: str
+    upstream: str | None
+    publication: str | None
+    remote: str
     state_text: str
     state_mark: str
     state_colour: Callable[[str], str]
     updated: str
     pull_request: PullRequest
     is_current: bool
+    worktree: str
+
+
+def hyperlink(text: str, url: str, *, enabled: bool) -> str:
+    """Make text clickable with an OSC 8 link on a capable interactive terminal."""
+    if not enabled or not url:
+        return text
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+
+def pull_request_status(row: dict[str, object]) -> str:
+    """Normalize GitHub's PR and review fields into a compact status."""
+    if row.get("isDraft"):
+        return "draft"
+    state = str(row.get("state", "")).upper()
+    if state == "MERGED":
+        return "merged"
+    if state == "CLOSED":
+        return "closed"
+    decision = str(row.get("reviewDecision", "")).upper()
+    if decision == "APPROVED":
+        return "approved"
+    if decision == "CHANGES_REQUESTED":
+        return "changes requested"
+    return "open"
+
+
+def parse_track(track: str) -> tuple[int, int] | None:
+    """Return ahead/behind counts from Git's tracking decoration."""
+    if "gone" in track:
+        return None
+    ahead_match = re.search(r"ahead (\d+)", track)
+    behind_match = re.search(r"behind (\d+)", track)
+    return (
+        int(ahead_match.group(1)) if ahead_match else 0,
+        int(behind_match.group(1)) if behind_match else 0,
+    )
+
+
+def publication_for(
+    name: str,
+    upstream: str,
+    upstream_track: str,
+    push: str,
+    push_track: str,
+    remote_refs: set[str],
+    remotes: set[str],
+) -> tuple[str | None, tuple[int, int] | None, bool]:
+    """Find the branch's push/remote counterpart without conflating its upstream."""
+    if push:
+        gone = "gone" in push_track and push not in remote_refs
+        return push, parse_track(push_track), gone
+
+    matching = sorted(ref for ref in remote_refs if ref.partition("/")[2] == name)
+    if matching:
+        publication = (
+            upstream
+            if upstream in matching
+            else f"origin/{name}"
+            if f"origin/{name}" in matching
+            else matching[0]
+        )
+        track = upstream_track if publication == upstream else ""
+        return publication, parse_track(track), False
+
+    upstream_remote, separator, upstream_branch = upstream.partition("/")
+    if (
+        separator
+        and upstream_remote in remotes
+        and upstream_branch == name
+        and "gone" in upstream_track
+    ):
+        return upstream, None, True
+    return None, (0, 0), False
 
 
 def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
@@ -159,6 +238,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         return 2
 
     use_colour = not plain and sys.stdout.isatty() and not bool(os.environ.get("NO_COLOR"))
+    use_links = not plain and sys.stdout.isatty()
     modern_terminal = sys.platform != "win32" or bool(
         os.environ.get("WT_SESSION")
         or os.environ.get("TERM_PROGRAM")
@@ -183,6 +263,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
             "ahead": "↑",
             "behind": "↓",
             "diverged": "⇅",
+            "gone": "✕",
             "local": "·",
             "rule": "─",
             "ellipsis": "…",
@@ -195,6 +276,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
             "ahead": "^",
             "behind": "v",
             "diverged": "x",
+            "gone": "!",
             "local": ".",
             "rule": "-",
             "ellipsis": "..",
@@ -223,7 +305,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         "--limit",
         "100",
         "--json",
-        "headRefName,number,state,isDraft,reviewDecision",
+        "headRefName,number,state,isDraft,reviewDecision,url",
     )
     if pr_json is not None:
         try:
@@ -235,13 +317,25 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
                 name = pr.get("headRefName")
                 if not name or name == default_branch or name in pull_requests:
                     continue
-                state = "draft" if pr.get("isDraft") else str(pr.get("state", "")).lower()
-                approved = pr.get("reviewDecision") == "APPROVED"
+                state = pull_request_status(pr)
                 colour = (
-                    green if approved or state == "open" else yellow if state == "draft" else dim
+                    green
+                    if state in {"approved", "merged"}
+                    else red
+                    if state == "changes requested"
+                    else yellow
+                    if state == "draft"
+                    else dim
+                    if state == "closed"
+                    else blue
                 )
-                suffix = " approved" if approved else ""
-                pull_requests[name] = PullRequest(f"#{pr.get('number')} {state}{suffix}", colour)
+                number = pr.get("number")
+                pull_requests[name] = PullRequest(
+                    f"#{number} {state}",
+                    colour,
+                    number if isinstance(number, int) else None,
+                    str(pr.get("url", "")),
+                )
 
     current = command_output("git", "branch", "--show-current") or ""
     dirty = git_output("status", "--short", "--untracked-files=all")
@@ -262,44 +356,85 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
 
     worktree_parts = [f"{count} {kind}" for kind, count in worktree_counts.items() if count]
 
+    remote_rows = git_output(
+        "for-each-ref",
+        "refs/remotes",
+        "--format=%(refname:short)\t%(symref)",
+    )
+    remote_refs = {
+        ref
+        for row in remote_rows.splitlines()
+        for ref, symref in [row.split("\t", 1)]
+        if not symref
+    }
+    remotes = set(git_output("remote").splitlines())
+
     raw_branches = git_output(
         "for-each-ref",
         "--sort=-committerdate",
         "refs/heads",
-        "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)\t%(committerdate:relative)",
+        "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)\t%(push:short)\t%(push:track)\t%(committerdate:relative)\t%(worktreepath)",
     )
     branches: list[Branch] = []
     for line in raw_branches.splitlines():
-        name, upstream, track, updated = line.split("\t", 3)
-        detail = track.strip("[]")
-        ahead = "ahead" in detail
-        behind = "behind" in detail
-        if not upstream:
+        name, upstream, upstream_track, push, push_track, updated, worktree_path = line.split(
+            "\t", 6
+        )
+        publication, counts, gone = publication_for(
+            name,
+            upstream,
+            upstream_track,
+            push,
+            push_track,
+            remote_refs,
+            remotes,
+        )
+        if publication and counts == (0, 0) and publication != upstream and publication != push:
+            raw_counts = git_output(
+                "rev-list", "--left-right", "--count", f"{publication}...{name}"
+            )
+            behind_count, ahead_count = (int(value) for value in raw_counts.split())
+            counts = ahead_count, behind_count
+
+        ahead_count, behind_count = counts or (0, 0)
+        if gone:
+            state_text, state_colour, state_mark = "remote gone", red, glyph["gone"]
+        elif not publication:
             state_text, state_colour, state_mark = "local only", dim, glyph["local"]
-        elif ahead and behind:
-            state_text, state_colour, state_mark = detail, red, glyph["diverged"]
-        elif ahead:
-            state_text, state_colour, state_mark = detail, yellow, glyph["ahead"]
-        elif behind:
-            state_text, state_colour, state_mark = detail, blue, glyph["behind"]
+        elif ahead_count and behind_count:
+            state_text = f"ahead {ahead_count}, behind {behind_count}"
+            state_colour, state_mark = red, glyph["diverged"]
+        elif ahead_count:
+            state_text = f"ahead {ahead_count}"
+            state_colour, state_mark = yellow, glyph["ahead"]
+        elif behind_count:
+            state_text = f"behind {behind_count}"
+            state_colour, state_mark = blue, glyph["behind"]
         else:
             state_text, state_colour, state_mark = "in sync", green, glyph["synced"]
 
-        tracking = "-"
-        if upstream:
-            remote, _, remote_branch = upstream.partition("/")
-            tracking = remote if remote_branch == name else upstream
+        remote = "-"
+        if publication:
+            remote_name, _, remote_branch = publication.partition("/")
+            remote = remote_name if remote_branch == name else publication
+
+        linked_worktree = ""
+        if worktree_path and Path(worktree_path).resolve() != Path(repo_root).resolve():
+            linked_worktree = Path(worktree_path).name
 
         branches.append(
             Branch(
                 name=name,
-                tracking=tracking,
+                upstream=upstream or None,
+                publication=publication,
+                remote=remote,
                 state_text=state_text,
                 state_mark=state_mark,
                 state_colour=state_colour,
                 updated=updated,
                 pull_request=pull_requests.get(name, PullRequest("-", dim)),
                 is_current=name == current,
+                worktree=linked_worktree,
             )
         )
 
@@ -308,6 +443,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
 
     branch_heading = f"BRANCH ({len(branches)} local)"
     show_pr = pr_json is not None
+    show_worktree = any(branch.worktree for branch in branches)
     pr_width = (
         max([len("PULL REQUEST"), *(len(branch.pull_request.text) for branch in branches)])
         if show_pr
@@ -315,12 +451,14 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     )
     columns = {
         "name": natural([branch.name for branch in branches], branch_heading, 2),
-        "tracking": natural([branch.tracking for branch in branches], "TRACKING"),
+        "remote": natural([branch.remote for branch in branches], "REMOTE"),
         "state": natural(
             [f"{branch.state_mark} {branch.state_text}" for branch in branches], "STATE"
         ),
         "updated": natural([branch.updated for branch in branches], "UPDATED"),
     }
+    if show_worktree:
+        columns["worktree"] = natural([branch.worktree or "-" for branch in branches], "WORKTREE")
 
     overflow = sum(columns.values()) + pr_width - terminal_width
     compact_dates = False
@@ -330,9 +468,15 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         overflow -= columns["updated"] - compact_width
         columns["updated"] = compact_width
     if overflow > 0:
-        floor = len("TRACKING") + 2
-        shed = min(overflow, max(0, columns["tracking"] - floor))
-        columns["tracking"] -= shed
+        floor = len("WORKTREE") + 2
+        shed = min(overflow, max(0, columns.get("worktree", floor) - floor))
+        if show_worktree:
+            columns["worktree"] -= shed
+        overflow -= shed
+    if overflow > 0:
+        floor = len("REMOTE") + 2
+        shed = min(overflow, max(0, columns["remote"] - floor))
+        columns["remote"] -= shed
         overflow -= shed
     if overflow > 0:
         columns["name"] = max(18, columns["name"] - overflow)
@@ -351,7 +495,8 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     total_width = sum(columns.values()) + pr_width
     repo_name = Path(repo_root).name
     unpushed = sum("ahead" in branch.state_text for branch in branches)
-    unpublished = sum(branch.tracking == "-" for branch in branches)
+    unpublished = sum(branch.publication is None for branch in branches)
+    remote_gone = sum(branch.state_text == "remote gone" for branch in branches)
     behind_count = sum("behind" in branch.state_text for branch in branches)
 
     print()
@@ -362,9 +507,11 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     print(dim(glyph["rule"] * total_width))
     heading = (
         pad(branch_heading, columns["name"])
-        + pad("TRACKING", columns["tracking"])
+        + pad("REMOTE", columns["remote"])
         + pad("STATE", columns["state"])
     )
+    if show_worktree:
+        heading += pad("WORKTREE", columns["worktree"])
     heading += pad("UPDATED", columns["updated"]) + "PULL REQUEST" if show_pr else "UPDATED"
     print(dim(heading))
 
@@ -376,16 +523,30 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         row = marker + paint_branch(name, branch.is_current) + name_padding
         row += dim(
             pad(
-                fit(branch.tracking, columns["tracking"] - 2, glyph["ellipsis"]),
-                columns["tracking"],
+                fit(branch.remote, columns["remote"] - 2, glyph["ellipsis"]),
+                columns["remote"],
             )
         )
         row += branch.state_colour(
             pad(f"{branch.state_mark} {branch.state_text}", columns["state"])
         )
+        if show_worktree:
+            worktree_name = branch.worktree or "-"
+            row += dim(
+                pad(
+                    fit(worktree_name, columns["worktree"] - 2, glyph["ellipsis"]),
+                    columns["worktree"],
+                )
+            )
         if show_pr:
             row += dim(pad(updated, columns["updated"]))
-            row += branch.pull_request.colour(branch.pull_request.text)
+            pr = branch.pull_request
+            if pr.number is None:
+                rendered_pr = pr.text
+            else:
+                number = f"#{pr.number}"
+                rendered_pr = hyperlink(number, pr.url, enabled=use_links) + pr.text[len(number) :]
+            row += pr.colour(rendered_pr)
         else:
             row += dim(updated)
         print(row)
@@ -408,6 +569,8 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         counts.append(f"{behind_count} behind")
     if unpublished:
         counts.append(f"{unpublished} never published")
+    if remote_gone:
+        counts.append(f"{remote_gone} remote gone")
     if counts:
         print(dim("  ·  ".join(counts)))
 
