@@ -71,10 +71,12 @@ jobs:
           version=${RELEASE_TAG#v}
           wheel="dist/git_muster-$version-py3-none-any.whl"
           sdist="dist/git_muster-$version.tar.gz"
+          find dist -maxdepth 1 -type f -print
           test -f "$wheel"
           test -f "$sdist"
-          test "$(find dist -type f | wc -l | tr -d ' ')" = "2"
-          test "$(uv tool run --from "$wheel" git-muster --version)" = "git-muster $version"
+          archive_count=$(find dist -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) | wc -l | tr -d ' ')
+          test "$archive_count" = "2"
+          test "$(uv tool run --from "./$wheel" git-muster --version)" = "git-muster $version"
 
       - name: Store verified distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

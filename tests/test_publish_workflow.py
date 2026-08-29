@@ -22,7 +22,8 @@ def test_publish_workflow_validates_tag_and_distributions() -> None:
     assert "git describe --tags --exact-match" in text
     assert 'wheel="dist/git_muster-$version-py3-none-any.whl"' in text
     assert 'sdist="dist/git_muster-$version.tar.gz"' in text
-    assert "uv tool run --from" in text
+    assert "archive_count=$(find dist -maxdepth 1 -type f" in text
+    assert 'uv tool run --from "./$wheel"' in text
 
 
 def test_publish_workflow_uses_narrow_oidc_permissions_without_a_token() -> None:
