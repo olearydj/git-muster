@@ -4,6 +4,12 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-30
+
+### Added
+
+- GitHub repository titles now show `owner / repository`, link both parts in interactive terminals, and include explicit visibility, fork, and archive labels when GitHub reports them. The fork label links to the parent repository.
+
 ## [0.4.1] - 2026-08-29
 
 ### Changed
@@ -43,7 +49,8 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 First public release: a one-shot branch report covering publication state, ahead/behind counts, linked worktrees, and optional GitHub pull-request status, published to PyPI with Trusted Publishing.
 
-[Unreleased]: https://github.com/olearydj/git-muster/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/olearydj/git-muster/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/olearydj/git-muster/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/olearydj/git-muster/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/olearydj/git-muster/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/olearydj/git-muster/releases/tag/v0.3.1
