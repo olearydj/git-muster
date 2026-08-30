@@ -190,3 +190,16 @@ def test_dependabot_watches_actions_and_dependencies() -> None:
 
     assert "package-ecosystem: github-actions" in text
     assert "package-ecosystem: uv" in text
+
+
+def test_dependabot_leaves_declared_python_bounds_alone() -> None:
+    text = DEPENDABOT.read_text()
+    uv_block = text.split("package-ecosystem: uv", maxsplit=1)[1]
+    actions_block = text.split("package-ecosystem: github-actions", maxsplit=1)[1].split(
+        "package-ecosystem: uv", maxsplit=1
+    )[0]
+
+    # Raising a major means rewriting pyproject.toml's bounds, which stays a
+    # human decision; action pins carry no such policy, so they keep flowing.
+    assert 'update-types: ["version-update:semver-major"]' in uv_block
+    assert "ignore:" not in actions_block

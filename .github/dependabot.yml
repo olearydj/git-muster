@@ -20,3 +20,8 @@ updates:
     groups:
       python-dependencies:
         patterns: ["*"]
+    # A major bump is proposed by widening the bounds declared in pyproject.toml.
+    # Those bounds are a deliberate choice, so majors are raised by hand instead.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
