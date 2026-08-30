@@ -10,12 +10,19 @@
 - Do not add branch deletion, switching, merging, rebasing, pushing, configuration files, or a plugin system without an explicit scope change.
 - The only default repository mutation is `git fetch --all --prune`; `--no-fetch` must remain fully read-only.
 - Keep runtime dependencies limited to Typer and Rich unless an explicit requirement makes another package necessary.
+- Keep release archives workflow-produced; never attach hand-built assets to a GitHub release.
+- Keep immutable releases disabled while assets are attached after publication; enabling it would break the publish workflow.
+- Pin every GitHub Action to a full commit SHA with a version comment.
 
 ## Layout
 
 - `src/git_muster/cli.py`: command behavior and terminal presentation.
 - `tests/`: offline tests using temporary Git repositories or command stubs.
 - `README.md`: installation, usage, and behavioral boundaries.
+- `CHANGELOG.md`: user-visible history; every release needs an entry.
+- `SECURITY.md`: supported versions, reporting channel, and release-integrity claims.
+- `.github/workflows/`: CI and the tag-verifying PyPI publish pipeline.
+- `.github/scripts/`: helpers the publish pipeline runs; keep them standard-library only and tested.
 
 ## Handoff and context
 

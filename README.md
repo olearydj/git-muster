@@ -3,7 +3,7 @@
 [![CI](https://github.com/olearydj/git-muster/actions/workflows/ci.yml/badge.svg)](https://github.com/olearydj/git-muster/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/git-muster?logo=pypi&logoColor=white)](https://pypi.org/project/git-muster/)
 [![Python 3.13–3.14](https://img.shields.io/badge/python-3.13%E2%80%933.14-blue.svg)](https://www.python.org/)
-[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/olearydj/git-muster/blob/main/LICENSE)
 
 Every branch, present and accounted for.
 
@@ -39,7 +39,7 @@ BRANCH (4 local)      REMOTE  STATE          WORKTREE       UPDATED  PULL REQUES
 ## Requirements
 
 - Python 3.13 or 3.14
-- Git
+- Git 2.23 or newer, for `git branch --show-current` and `for-each-ref`'s `%(worktreepath)`
 - [uv](https://docs.astral.sh/uv/) for the recommended installation
 - Optional: an authenticated [GitHub CLI](https://cli.github.com/) for pull-request information
 
@@ -78,7 +78,7 @@ Run the report from anywhere inside a Git repository:
 git muster
 ```
 
-By default, Git Muster runs `git fetch --all --prune --quiet` before reporting so remote-tracking references are current. Skip all network activity and repository mutation with:
+By default, Git Muster runs `git fetch --all --prune --quiet` before reporting so remote-tracking references are current. When that fetch fails, because the machine is offline or a remote no longer answers, the report still renders from the references already on disk and says that branch states may be out of date. Skip all network activity and repository mutation with:
 
 ```console
 git muster --no-fetch
@@ -96,6 +96,18 @@ The built-in help includes examples, effects, linked-worktree behavior, and a Ri
 git muster --help
 git muster --version
 ```
+
+### Color, symbols, and width
+
+Color, Unicode symbols, and clickable pull-request numbers appear when the report is written to an interactive terminal that can render them. Git Muster honors the usual overrides:
+
+| Variable | Effect |
+|---|---|
+| `NO_COLOR` | Disables color; symbols and layout are unchanged. |
+| `FORCE_COLOR`, `CLICOLOR_FORCE` | Keep color when output is redirected to a file or pipe. |
+| `COLUMNS` | Overrides the detected terminal width used to fit columns. |
+
+`--plain` overrides all of them and emits pure ASCII, without color or terminal hyperlinks. Git Muster also falls back to those ASCII glyphs on its own whenever the destination stream cannot encode its symbols, so redirected output never fails to encode.
 
 ## Reading the report
 
@@ -121,7 +133,7 @@ Publication is deliberately separate from Git's configured upstream. A branch is
 
 When another linked worktree holds a branch, Git Muster shows its directory in the table and lists the full checkout path below it. It does not scan those other worktrees for dirtiness or change them.
 
-GitHub integration uses one optional `gh pr list` query. Without an installed and authenticated `gh`, the complete Git report still works and explains why PR status is unavailable.
+GitHub integration uses one optional `gh pr list --state all --limit 100` query, so a branch whose pull request falls outside the hundred most recent is reported without pull-request state. When several pull requests share a head branch, the newest open, draft, approved, or changes-requested one wins over closed and merged ones. Without an installed and authenticated `gh`, or when no remote points at a known GitHub host, the complete Git report still works and names the reason pull-request state is missing.
 
 ## Safety and scope
 
@@ -142,8 +154,14 @@ uv run --locked ty check
 uv build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. CI runs the same checks on Python 3.13 and 3.14.
+See [CONTRIBUTING.md](https://github.com/olearydj/git-muster/blob/main/CONTRIBUTING.md) before opening a pull request. CI runs the same checks on Python 3.13 and 3.14.
+
+## Project documents
+
+- [CHANGELOG.md](https://github.com/olearydj/git-muster/blob/main/CHANGELOG.md) for release history.
+- [CONTRIBUTING.md](https://github.com/olearydj/git-muster/blob/main/CONTRIBUTING.md) for development and release steps.
+- [SECURITY.md](https://github.com/olearydj/git-muster/blob/main/SECURITY.md) for reporting a vulnerability.
 
 ## License
 
-Git Muster is available under the [MIT License](LICENSE).
+Git Muster is available under the [MIT License](https://github.com/olearydj/git-muster/blob/main/LICENSE).

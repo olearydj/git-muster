@@ -30,4 +30,19 @@ In the pull-request description, explain what changed, why it helps, and how it 
 
 ## Releases
 
-Release tags must match the version in `pyproject.toml`. Publishing a GitHub release automatically rebuilds and verifies that tag, then publishes the resulting wheel and source distribution through PyPI Trusted Publishing. The manual workflow input exists only to publish or retry an existing release tag; never add a long-lived PyPI token.
+Release tags must match the version in `pyproject.toml`, and every release needs a `CHANGELOG.md` entry.
+
+1. Move the `Unreleased` notes into a dated version section in `CHANGELOG.md`.
+2. Bump `version` in `pyproject.toml` and run `uv lock` so the lockfile records it.
+3. Commit, tag the exact version (`git tag -a v1.2.3 -m "git-muster 1.2.3"`), and push the branch and the tag.
+4. Publish a GitHub release for that tag, using the changelog entry as its notes.
+
+Publishing the release runs `.github/workflows/publish-pypi.yml`, which rebuilds and verifies the tag, publishes the wheel and source distribution through PyPI Trusted Publishing, and then attaches those same archives to the GitHub release. Do not upload release archives by hand: assets built outside the workflow carry no verification and no attestation. Never add a long-lived PyPI token.
+
+Because the workflow attaches archives after the release is published, [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) must stay disabled for this repository; enabling that setting would reject every asset upload.
+
+Recovering a failed run depends on how far it got. PyPI files are immutable, so a version PyPI already holds is never republished:
+
+- Failed before PyPI accepted the version: dispatch the workflow again for the same tag, or re-run the failed jobs.
+- Published to PyPI but the assets did not attach: dispatch the workflow for that tag with `assets_only` enabled. That run validates the tag and its release, skips the build entirely, then downloads the archives from PyPI, verifies their SHA-256 digests, and attaches those exact files. Rebuilding is deliberately avoided: two compatible uv versions can produce wheels that differ in build metadata, and an old tag may no longer build even though its published files remain valid.
+- Published something wrong: release a new version. Never move a published tag or retry a version PyPI already holds.
