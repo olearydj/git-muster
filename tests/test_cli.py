@@ -149,6 +149,24 @@ def test_report_combines_worktree_branch_and_pr_state(
 ) -> None:
     repository = make_repository(tmp_path)
     monkeypatch.chdir(repository)
+    monkeypatch.setattr(
+        cli,
+        "repository_github_url",
+        lambda remotes: "https://github.com/owner/example",
+    )
+    monkeypatch.setattr(
+        cli,
+        "github_repository",
+        lambda url: cli.GitHubRepository(
+            owner="owner",
+            name="example",
+            url=url,
+            visibility="private",
+            is_fork=True,
+            parent_url="https://github.com/upstream/example",
+            is_archived=True,
+        ),
+    )
     stub_gh(
         monkeypatch,
         gh_rows(
@@ -177,7 +195,7 @@ def test_report_combines_worktree_branch_and_pr_state(
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert "example :: feature/report" in captured.out
+    assert "owner / example [private] [fork] [archived] :: feature/report" in captured.out
     assert "dirty: 1 untracked" in captured.out
     assert "feature/report" in captured.out
     assert "^ ahead 1" in captured.out
@@ -202,6 +220,16 @@ def test_plain_output_uses_ascii_interface_glyphs(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(make_repository(tmp_path))
+    monkeypatch.setattr(
+        cli,
+        "repository_github_url",
+        lambda remotes: "https://github.com/owner/example",
+    )
+    monkeypatch.setattr(
+        cli,
+        "github_repository",
+        lambda url: cli.GitHubRepository("owner", "example", url),
+    )
     stub_gh(monkeypatch, gh_rows([]))
 
     assert cli.run_report(no_fetch=True, plain=True) == 0
@@ -209,6 +237,7 @@ def test_plain_output_uses_ascii_interface_glyphs(
     captured = capsys.readouterr()
     assert captured.out.isascii(), "built-in plain-mode text should use ASCII glyphs"
     assert "\x1b[" not in captured.out
+    assert "owner / example :: feature/report" in captured.out
     assert "1 with unpushed commits  |  1 local only" in captured.out
 
 
@@ -644,6 +673,147 @@ def test_hyperlink_is_only_emitted_when_enabled() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("remote_url", "expected"),
+    [
+        ("https://github.com/owner/project.git", "https://github.com/owner/project"),
+        ("git@github.com:owner/project.git", "https://github.com/owner/project"),
+        ("ssh://git@github.com/owner/project", "https://github.com/owner/project"),
+        ("https://github.com/owner/project/extra", ""),
+        ("https://gitlab.com/owner/project.git", ""),
+        ("/tmp/project.git", ""),
+    ],
+)
+def test_github_repository_url(remote_url: str, expected: str) -> None:
+    assert cli.github_repository_url(remote_url) == expected
+
+
+def test_repository_github_url_prefers_origin_then_other_remotes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls = {
+        "origin": "https://gitlab.com/owner/project.git",
+        "upstream": "git@github.com:upstream/project.git",
+    }
+    monkeypatch.setattr(
+        cli,
+        "command_output",
+        lambda command, *args: urls[args[-1]],
+    )
+
+    assert cli.repository_github_url(set(urls)) == "https://github.com/upstream/project"
+
+
+def test_github_repository_reads_identity_relationship_and_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    payload = {
+        "nameWithOwner": "canonical/project",
+        "url": "https://github.com/canonical/project",
+        "visibility": "PRIVATE",
+        "isFork": True,
+        "parent": {"url": "https://github.com/upstream/project"},
+        "isArchived": True,
+    }
+
+    def command_result(command: str, *args: str) -> tuple[int, str, str]:
+        calls.append((command, args))
+        return 0, json.dumps(payload), ""
+
+    monkeypatch.setattr(cli, "command_result", command_result)
+
+    assert cli.github_repository("https://github.com/owner/project") == cli.GitHubRepository(
+        owner="canonical",
+        name="project",
+        url="https://github.com/canonical/project",
+        visibility="private",
+        is_fork=True,
+        parent_url="https://github.com/upstream/project",
+        is_archived=True,
+    )
+    assert calls == [
+        (
+            "gh",
+            (
+                "repo",
+                "view",
+                "owner/project",
+                "--json",
+                "nameWithOwner,url,visibility,isFork,parent,isArchived",
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {
+                "url": "https://github.com/renamed/project",
+                "visibility": "UNKNOWN",
+                "isFork": "yes",
+                "parent": "unusable",
+                "isArchived": "yes",
+            },
+            cli.GitHubRepository("renamed", "project", "https://github.com/renamed/project"),
+        ),
+        (
+            {
+                "nameWithOwner": "owner/project",
+                "url": "https://github.com/owner/project",
+                "visibility": "PUBLIC",
+                "isFork": True,
+                "parent": {"nameWithOwner": "upstream/project"},
+            },
+            cli.GitHubRepository(
+                "owner",
+                "project",
+                "https://github.com/owner/project",
+                visibility="public",
+                is_fork=True,
+                parent_url="https://github.com/upstream/project",
+            ),
+        ),
+    ],
+)
+def test_github_repository_handles_optional_metadata_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
+    expected: cli.GitHubRepository,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "command_result",
+        lambda command, *args: (0, json.dumps(payload), ""),
+    )
+
+    assert cli.github_repository("https://github.com/owner/project") == expected
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        (0, "not json", ""),
+        (0, "[]", ""),
+        (1, "", "authentication required"),
+        None,
+    ],
+)
+def test_github_repository_retains_url_identity_when_metadata_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    result: tuple[int, str, str] | None,
+) -> None:
+    monkeypatch.setattr(cli, "command_result", lambda command, *args: result)
+
+    assert cli.github_repository("https://github.com/owner/project") == cli.GitHubRepository(
+        owner="owner",
+        name="project",
+        url="https://github.com/owner/project",
+    )
+
+
 def test_publication_is_independent_of_a_local_upstream() -> None:
     publication, counts, gone = cli.publication_for(
         "topic",
@@ -756,6 +926,23 @@ def test_interactive_terminal_shows_progress_and_links(
 ) -> None:
     monkeypatch.chdir(make_repository(tmp_path))
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(
+        cli,
+        "repository_github_url",
+        lambda remotes: "https://github.com/owner/example",
+    )
+    monkeypatch.setattr(
+        cli,
+        "github_repository",
+        lambda url: cli.GitHubRepository(
+            owner="owner",
+            name="example",
+            url=url,
+            visibility="public",
+            is_fork=True,
+            parent_url="https://github.com/upstream/example",
+        ),
+    )
     stub_gh(
         monkeypatch,
         gh_rows(
@@ -776,6 +963,9 @@ def test_interactive_terminal_shows_progress_and_links(
     captured = capsys.readouterr()
     assert "fetching..." in captured.out
     assert "\r           \r" in captured.out
+    assert "\x1b]8;;https://github.com/owner\x1b\\" in captured.out
+    assert "\x1b]8;;https://github.com/owner/example\x1b\\" in captured.out
+    assert "\x1b]8;;https://github.com/upstream/example\x1b\\" in captured.out
     assert "\x1b]8;;https://github.example/pull/42\x1b\\" in captured.out
     assert "Fetch failed" not in captured.out
 

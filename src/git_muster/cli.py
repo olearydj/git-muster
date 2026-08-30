@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 import typer
 from rich.console import Console
@@ -81,6 +82,7 @@ ASCII_GLYPHS = {
 
 PR_LIMIT = 100
 PR_FIELDS = "headRefName,number,state,isDraft,reviewDecision,url"
+REPOSITORY_FIELDS = "nameWithOwner,url,visibility,isFork,parent,isArchived"
 ACTIVE_PR_STATES = {"draft", "open", "approved", "changes requested"}
 
 PR_NOTICES: dict[str, tuple[str, ...]] = {
@@ -243,6 +245,19 @@ class PullRequest:
 
 
 @dataclass(frozen=True)
+class GitHubRepository:
+    """GitHub identity and presentation metadata for the current repository."""
+
+    owner: str
+    name: str
+    url: str
+    visibility: str = ""
+    is_fork: bool = False
+    parent_url: str = ""
+    is_archived: bool = False
+
+
+@dataclass(frozen=True)
 class Branch:
     """Collected status for one local branch."""
 
@@ -266,6 +281,90 @@ def hyperlink(text: str, url: str, *, enabled: bool) -> str:
         return text
     underlined = f"\033[4m{text}\033[24m"
     return f"\033]8;;{url}\033\\{underlined}\033]8;;\033\\"
+
+
+def github_repository_url(remote_url: str) -> str:
+    """Turn a GitHub clone URL into its canonical HTTPS repository page."""
+    scp_match = re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(.+)", remote_url)
+    if scp_match and "://" not in remote_url:
+        host, path = scp_match.groups()
+    else:
+        parsed = urlsplit(remote_url)
+        if parsed.scheme not in {"git", "http", "https", "ssh"}:
+            return ""
+        host, path = parsed.hostname or "", parsed.path
+
+    if host.lower() != "github.com":
+        return ""
+    path = path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not re.fullmatch(r"[-A-Za-z0-9_.]+/[-A-Za-z0-9_.]+", path):
+        return ""
+    return f"https://github.com/{path}"
+
+
+def repository_github_url(remotes: set[str]) -> str:
+    """Find the repository page, preferring the conventional origin remote."""
+    for remote in sorted(remotes, key=lambda name: (name != "origin", name)):
+        remote_url = command_output("git", "remote", "get-url", remote) or ""
+        if url := github_repository_url(remote_url):
+            return url
+    return ""
+
+
+def github_repository(repository_url: str) -> GitHubRepository:
+    """Read repository metadata from GitHub, retaining URL-derived identity on failure."""
+    owner, name = urlsplit(repository_url).path.strip("/").split("/", 1)
+    fallback = GitHubRepository(owner, name, repository_url)
+    result = command_result("gh", "repo", "view", f"{owner}/{name}", "--json", REPOSITORY_FIELDS)
+    if result is None or result[0] != 0:
+        return fallback
+    try:
+        payload = json.loads(result[1])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return fallback
+    if not isinstance(payload, dict):
+        return fallback
+
+    canonical_url = github_repository_url(str(payload.get("url", ""))) or repository_url
+    canonical_name = payload.get("nameWithOwner")
+    if isinstance(canonical_name, str) and re.fullmatch(
+        r"[-A-Za-z0-9_.]+/[-A-Za-z0-9_.]+", canonical_name
+    ):
+        owner, name = canonical_name.split("/", 1)
+        canonical_url = f"https://github.com/{canonical_name}"
+    else:
+        owner, name = urlsplit(canonical_url).path.strip("/").split("/", 1)
+
+    visibility = payload.get("visibility")
+    visibility = (
+        visibility.lower()
+        if isinstance(visibility, str) and visibility.upper() in {"PUBLIC", "PRIVATE", "INTERNAL"}
+        else ""
+    )
+
+    parent_url = ""
+    parent = payload.get("parent")
+    if isinstance(parent, dict):
+        parent_url = github_repository_url(str(parent.get("url", "")))
+        parent_name = parent.get("nameWithOwner")
+        if (
+            not parent_url
+            and isinstance(parent_name, str)
+            and re.fullmatch(r"[-A-Za-z0-9_.]+/[-A-Za-z0-9_.]+", parent_name)
+        ):
+            parent_url = f"https://github.com/{parent_name}"
+
+    return GitHubRepository(
+        owner=owner,
+        name=name,
+        url=canonical_url,
+        visibility=visibility,
+        is_fork=payload.get("isFork") is True,
+        parent_url=parent_url,
+        is_archived=payload.get("isArchived") is True,
+    )
 
 
 def pull_request_status(row: dict[str, object]) -> str:
@@ -491,6 +590,8 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         if not symref
     }
     remotes = set(git_output("remote").splitlines())
+    repo_url = repository_github_url(remotes)
+    github_repo = github_repository(repo_url) if repo_url else None
 
     raw_branches = git_output(
         "for-each-ref",
@@ -624,7 +725,23 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     behind_count = sum("behind" in branch.state_text for branch in branches)
 
     print()
-    print(bold(repo_name) + dim(" :: ") + bold(current or "detached HEAD"))
+    if github_repo:
+        owner_url = f"https://github.com/{github_repo.owner}"
+        rendered_repo = (
+            bold(hyperlink(github_repo.owner, owner_url, enabled=use_links))
+            + dim(" / ")
+            + bold(hyperlink(github_repo.name, github_repo.url, enabled=use_links))
+        )
+        if github_repo.visibility:
+            rendered_repo += dim(f" [{github_repo.visibility}]")
+        if github_repo.is_fork:
+            fork_label = hyperlink("[fork]", github_repo.parent_url, enabled=use_links)
+            rendered_repo += " " + dim(fork_label)
+        if github_repo.is_archived:
+            rendered_repo += " " + yellow("[archived]")
+    else:
+        rendered_repo = bold(repo_name)
+    print(rendered_repo + dim(" :: ") + bold(current or "detached HEAD"))
     separator = glyph["separator"]
     worktree = (
         yellow(f"dirty: {f' {separator} '.join(worktree_parts)}") if dirty_lines else green("clean")

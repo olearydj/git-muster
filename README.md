@@ -99,7 +99,7 @@ git muster --version
 
 ### Color, symbols, and width
 
-Color, Unicode symbols, and clickable pull-request numbers appear when the report is written to an interactive terminal that can render them. Git Muster honors the usual overrides:
+Color, Unicode symbols, clickable repository identities, and clickable pull-request numbers appear when the report is written to an interactive terminal that can render them. GitHub repositories appear as `owner / repository`, with the owner and repository linked separately. The title includes `[public]`, `[private]`, or `[internal]` when GitHub reports visibility, `[fork]` when the repository is a fork, and `[archived]` when it is archived. A fork label links to its parent repository. Git Muster resolves the repository from `origin`, or another GitHub remote when `origin` is not hosted there, and honors the usual overrides:
 
 | Variable | Effect |
 |---|---|
@@ -133,7 +133,7 @@ Publication is deliberately separate from Git's configured upstream. A branch is
 
 When another linked worktree holds a branch, Git Muster shows its directory in the table and lists the full checkout path below it. It does not scan those other worktrees for dirtiness or change them.
 
-GitHub integration uses one optional `gh pr list --state all --limit 100` query, so a branch whose pull request falls outside the hundred most recent is reported without pull-request state. When several pull requests share a head branch, the newest open, draft, approved, or changes-requested one wins over closed and merged ones. Without an installed and authenticated `gh`, or when no remote points at a known GitHub host, the complete Git report still works and names the reason pull-request state is missing.
+GitHub integration uses one `gh repo view` query for canonical identity, visibility, fork parent, and archive state, plus one optional `gh pr list --state all --limit 100` query for pull requests. A branch whose pull request falls outside the hundred most recent is reported without pull-request state. When several pull requests share a head branch, the newest open, draft, approved, or changes-requested one wins over closed and merged ones. Without an installed and authenticated `gh`, or when no remote points at a known GitHub host, the complete Git report still works, falls back to identity parsed from the remote URL, omits metadata it cannot establish, and names the reason pull-request state is missing.
 
 ## Safety and scope
 
