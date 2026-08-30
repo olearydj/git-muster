@@ -4,6 +4,8 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-29
+
 ### Changed
 
 - Rich 15 is now an accepted runtime dependency; the report and its help render identically on 14 and 15.
@@ -41,6 +43,7 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 First public release: a one-shot branch report covering publication state, ahead/behind counts, linked worktrees, and optional GitHub pull-request status, published to PyPI with Trusted Publishing.
 
-[Unreleased]: https://github.com/olearydj/git-muster/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/olearydj/git-muster/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/olearydj/git-muster/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/olearydj/git-muster/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/olearydj/git-muster/releases/tag/v0.3.1
