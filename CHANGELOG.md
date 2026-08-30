@@ -4,6 +4,10 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Changed
+
+- Rich 15 is now an accepted runtime dependency; the report and its help render identically on 14 and 15.
+
 ## [0.4.0] - 2026-08-29
 
 ### Added
