@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "git-muster"
-version = "0.3.1"
+version = "0.4.0"
 description = "See every local Git branch and what needs attention"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
@@ -31,11 +31,14 @@ gm = "git_muster.cli:entrypoint"
 Homepage = "https://github.com/olearydj/git-muster"
 Repository = "https://github.com/olearydj/git-muster"
 Issues = "https://github.com/olearydj/git-muster/issues"
+Changelog = "https://github.com/olearydj/git-muster/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.12,<1", "ty>=0.0.1a20"]
 
 [tool.uv]
+# Bound the front end as well as the build backend so local and CI resolution match.
+required-version = ">=0.12.1,<0.13"
 # Keep the cooldown in the project because uv records it in uv.lock.
 exclude-newer = "3 days"
 
