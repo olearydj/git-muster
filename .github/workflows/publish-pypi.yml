@@ -8,16 +8,26 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to publish or retry
+        description: Existing published release tag to build and publish
         required: true
         type: string
+      assets_only:
+        description: Skip PyPI and only reattach the verified archives to the release
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
+concurrency:
+  group: publish-pypi-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   verify-distributions:
-    name: Verify release distributions
+    name: Verify release tag and distributions
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
@@ -47,15 +57,30 @@ jobs:
           test "$project_version" = "$version"
           test "$(git describe --tags --exact-match)" = "$RELEASE_TAG"
 
+      - name: Confirm a published release owns the tag
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          published_tag=$(
+            gh release view "$RELEASE_TAG" --json tagName,isDraft \
+              --jq 'select(.isDraft == false) | .tagName'
+          )
+          test "$published_tag" = "$RELEASE_TAG"
+
       - name: Install uv
+        if: ${{ !inputs.assets_only }}
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
 
       - name: Install locked dependencies
+        if: ${{ !inputs.assets_only }}
         run: uv sync --locked --all-groups
 
       - name: Verify source
+        if: ${{ !inputs.assets_only }}
         run: |
           uv run --locked pytest
           uv run --locked ruff format --check .
@@ -63,9 +88,11 @@ jobs:
           uv run --locked ty check
 
       - name: Build distributions
+        if: ${{ !inputs.assets_only }}
         run: uv build
 
       - name: Verify distribution contract
+        if: ${{ !inputs.assets_only }}
         shell: sh
         run: |
           version=${RELEASE_TAG#v}
@@ -79,6 +106,7 @@ jobs:
           test "$(uv tool run --from "./$wheel" git-muster --version)" = "git-muster $version"
 
       - name: Store verified distributions
+        if: ${{ !inputs.assets_only }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pypi-distributions
@@ -91,7 +119,11 @@ jobs:
   publish:
     name: Publish verified distributions
     needs: verify-distributions
+    # PyPI files are immutable, so a version it already holds is never republished.
+    # Use assets_only to recover a failed asset upload without touching PyPI.
+    if: ${{ !inputs.assets_only }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: pypi
       url: https://pypi.org/p/git-muster
@@ -106,3 +138,49 @@ jobs:
 
       - name: Publish with PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  attach-release-assets:
+    name: Attach published distributions to the release
+    needs: [verify-distributions, publish]
+    if: >-
+      ${{ always()
+      && needs.verify-distributions.result == 'success'
+      && needs.publish.result != 'failure'
+      && needs.publish.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Retrieve the distributions this run published
+        if: ${{ !inputs.assets_only }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pypi-distributions
+          path: dist
+
+      # A recovery run publishes nothing, so it must attach the files PyPI already
+      # serves. Rebuilding from the tag can differ in build metadata and would
+      # recreate the divergence the run exists to repair.
+      # Checks out the dispatched ref, not the release tag: this script is CI
+      # tooling rather than release content, and tags published before it existed
+      # must stay recoverable.
+      - name: Check out the recovery script
+        if: ${{ inputs.assets_only }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the published distributions from PyPI
+        if: ${{ inputs.assets_only }}
+        shell: sh
+        run: python3 .github/scripts/download_release_distributions.py "${RELEASE_TAG#v}" dist
+
+      - name: Replace the release archives with the published ones
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/git_muster-* --clobber
