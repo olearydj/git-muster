@@ -51,6 +51,58 @@ The default run executes [cyan]git fetch --all --prune[/cyan]. It never switches
 merges, rebases, or pushes branches. Use [cyan]--no-fetch[/cyan] for a fully read-only run.
 """
 
+SYMBOL_GLYPHS = {
+    "current": "▸",
+    "synced": "✓",
+    "ahead": "↑",
+    "behind": "↓",
+    "diverged": "⇅",
+    "gone": "✕",
+    "local": "·",
+    "rule": "─",
+    "ellipsis": "…",
+    "notice": "▲",
+    "separator": "·",
+}
+
+ASCII_GLYPHS = {
+    "current": ">",
+    "synced": "=",
+    "ahead": "^",
+    "behind": "v",
+    "diverged": "x",
+    "gone": "!",
+    "local": ".",
+    "rule": "-",
+    "ellipsis": "..",
+    "notice": "!",
+    "separator": "|",
+}
+
+PR_LIMIT = 100
+PR_FIELDS = "headRefName,number,state,isDraft,reviewDecision,url"
+ACTIVE_PR_STATES = {"draft", "open", "approved", "changes requested"}
+
+PR_NOTICES: dict[str, tuple[str, ...]] = {
+    "missing": (
+        "Pull request state unknown - the GitHub CLI is not installed.",
+        "  Install it from https://cli.github.com, then run: gh auth login",
+    ),
+    "unauthenticated": (
+        "Pull request state unknown - the GitHub CLI is not logged in.",
+        "  Run: gh auth login",
+    ),
+    "not-github": ("Pull request state unknown - no remote points at a known GitHub host.",),
+    "unreachable": (
+        "Pull request state unknown - the GitHub CLI could not reach GitHub.",
+        "  Run: gh pr list --state all --limit 1",
+    ),
+    "unusable": (
+        "Pull request state unknown - the GitHub CLI returned unexpected data.",
+        "  Run: gh pr list --state all --limit 1",
+    ),
+}
+
 
 def branch_states_table() -> Table:
     """Build the branch-state reference shown in command help."""
@@ -90,30 +142,72 @@ app = typer.Typer(
 )
 
 
-def command_output(command: str, *args: str) -> str | None:
-    """Run a command quietly, returning ``None`` when it is unavailable or fails."""
+def command_result(command: str, *args: str) -> tuple[int, str, str] | None:
+    """Run a command, returning its status and streams, or ``None`` when it is unavailable."""
     try:
-        result = subprocess.run(
+        completed = subprocess.run(
             [command, *args],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
             text=True,
             check=False,
         )
     except OSError:
         return None
-    if result.returncode != 0:
+    return completed.returncode, completed.stdout.rstrip("\r\n"), completed.stderr.strip()
+
+
+def command_output(command: str, *args: str) -> str | None:
+    """Run a command quietly, returning ``None`` when it is unavailable or fails."""
+    result = command_result(command, *args)
+    if result is None or result[0] != 0:
         return None
-    return result.stdout.rstrip("\r\n")
+    return result[1]
 
 
 def git_output(*args: str) -> str:
     """Run a required Git command or raise a concise operational error."""
-    output = command_output("git", *args)
-    if output is None:
-        raise RuntimeError(f"git {' '.join(args)} failed")
-    return output
+    result = command_result("git", *args)
+    if result is None:
+        raise RuntimeError(f"git {' '.join(args)} failed: git is not installed")
+    code, stdout, stderr = result
+    if code != 0:
+        detail = stderr.splitlines()[0] if stderr else f"exit status {code}"
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return stdout
+
+
+def stream_supports(text: str, stream: Any) -> bool:
+    """Report whether a text stream can encode every character in ``text``."""
+    encoding = getattr(stream, "encoding", None)
+    if not encoding:
+        return True
+    try:
+        text.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return False
+    return True
+
+
+def enable_ansi_escapes() -> bool:
+    """Turn on virtual-terminal processing where needed and report ANSI support."""
+    if sys.platform != "win32":
+        return True
+    if not sys.stdout.isatty():
+        # Redirected output has no console mode to configure, so leave the
+        # decision to --plain, NO_COLOR, and FORCE_COLOR.
+        return True
+    try:  # pragma: no cover - Windows-only console setup
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except (AttributeError, OSError, ValueError):  # pragma: no cover - defensive
+        return False
 
 
 def compact_age(relative: str) -> str:
@@ -125,13 +219,16 @@ def compact_age(relative: str) -> str:
 
 
 def fit(value: str, limit: int, ellipsis: str) -> str:
-    """Middle-truncate text while retaining its recognizable ending."""
+    """Middle-truncate text to exactly ``limit`` cells, retaining its recognizable ending."""
     if len(value) <= limit:
         return value
-    if limit <= 3:
+    if limit <= len(ellipsis):
         return value[:limit]
-    keep_end = max(4, int((limit - 1) * 0.6))
-    keep_start = limit - 1 - keep_end
+    budget = limit - len(ellipsis)
+    keep_end = max(1, int(budget * 0.6))
+    keep_start = budget - keep_end
+    if keep_start <= 0:
+        return ellipsis + value[-budget:]
     return value[:keep_start] + ellipsis + value[-keep_end:]
 
 
@@ -173,19 +270,52 @@ def hyperlink(text: str, url: str, *, enabled: bool) -> str:
 
 def pull_request_status(row: dict[str, object]) -> str:
     """Normalize GitHub's PR and review fields into a compact status."""
-    if row.get("isDraft"):
-        return "draft"
     state = str(row.get("state", "")).upper()
     if state == "MERGED":
         return "merged"
     if state == "CLOSED":
         return "closed"
+    if row.get("isDraft"):
+        return "draft"
     decision = str(row.get("reviewDecision", "")).upper()
     if decision == "APPROVED":
         return "approved"
     if decision == "CHANGES_REQUESTED":
         return "changes requested"
     return "open"
+
+
+def github_failure(code: int, stderr: str) -> str:
+    """Classify why the GitHub CLI refused to report pull requests."""
+    message = stderr.lower()
+    if (
+        "no git remotes" in message
+        or "known github host" in message
+        or "not a git repository" in message
+    ):
+        return "not-github"
+    if code == 4 or "gh auth login" in message or "authentication" in message:
+        return "unauthenticated"
+    return "unreachable"
+
+
+def github_pull_requests() -> tuple[list[dict[str, object]], str | None]:
+    """Read pull requests through the GitHub CLI, explaining any failure."""
+    result = command_result(
+        "gh", "pr", "list", "--state", "all", "--limit", str(PR_LIMIT), "--json", PR_FIELDS
+    )
+    if result is None:
+        return [], "missing"
+    code, stdout, stderr = result
+    if code != 0:
+        return [], github_failure(code, stderr)
+    try:
+        parsed = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return [], "unusable"
+    if not isinstance(parsed, list):
+        return [], "unusable"
+    return [row for row in parsed if isinstance(row, dict)], None
 
 
 def parse_track(track: str) -> tuple[int, int] | None:
@@ -244,14 +374,27 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         print("git muster: current directory is not inside a Git repository", file=sys.stderr)
         return 2
 
-    use_colour = not plain and sys.stdout.isatty() and not bool(os.environ.get("NO_COLOR"))
-    use_links = not plain and sys.stdout.isatty()
+    interactive = sys.stdout.isatty()
+    ansi_ready = enable_ansi_escapes()
+    forced_colour = bool(os.environ.get("FORCE_COLOR") or os.environ.get("CLICOLOR_FORCE"))
+    use_colour = (
+        not plain
+        and ansi_ready
+        and not os.environ.get("NO_COLOR")
+        and (interactive or forced_colour)
+    )
+    use_links = not plain and ansi_ready and interactive
     modern_terminal = sys.platform != "win32" or bool(
         os.environ.get("WT_SESSION")
         or os.environ.get("TERM_PROGRAM")
         or os.environ.get("TERMINAL_EMULATOR")
     )
-    use_symbols = not plain and modern_terminal
+    use_symbols = (
+        not plain
+        and modern_terminal
+        and stream_supports("".join(SYMBOL_GLYPHS.values()), sys.stdout)
+    )
+    glyph = SYMBOL_GLYPHS if use_symbols else ASCII_GLYPHS
 
     def paint(code: str) -> Callable[[str], str]:
         return lambda text: f"\033[{code}m{text}\033[0m" if use_colour else text
@@ -263,86 +406,56 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     yellow = paint("33")
     blue = paint("34")
 
-    if use_symbols:
-        glyph = {
-            "current": "▸",
-            "synced": "✓",
-            "ahead": "↑",
-            "behind": "↓",
-            "diverged": "⇅",
-            "gone": "✕",
-            "local": "·",
-            "rule": "─",
-            "ellipsis": "…",
-            "notice": "▲",
-        }
-    else:
-        glyph = {
-            "current": ">",
-            "synced": "=",
-            "ahead": "^",
-            "behind": "v",
-            "diverged": "x",
-            "gone": "!",
-            "local": ".",
-            "rule": "-",
-            "ellipsis": "..",
-            "notice": "!",
-        }
-
     terminal_width = max(60, min(shutil.get_terminal_size((100, 24)).columns, 160))
 
+    fetch_failed = False
     if not no_fetch:
-        if sys.stdout.isatty():
+        if interactive:
             print(dim("fetching..."), end="", flush=True)
-        command_output("git", "fetch", "--all", "--prune", "--quiet")
-        if sys.stdout.isatty():
+        fetch_failed = command_output("git", "fetch", "--all", "--prune", "--quiet") is None
+        if interactive:
             print("\r           \r", end="", flush=True)
 
     default_branch = command_output("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
     default_branch = default_branch.removeprefix("origin/") if default_branch else "main"
 
+    pr_rows, pr_reason = github_pull_requests()
     pull_requests: dict[str, PullRequest] = {}
-    pr_json = command_output(
-        "gh",
-        "pr",
-        "list",
-        "--state",
-        "all",
-        "--limit",
-        "100",
-        "--json",
-        "headRefName,number,state,isDraft,reviewDecision,url",
-    )
-    if pr_json is not None:
-        try:
-            pr_rows = json.loads(pr_json)
-        except (json.JSONDecodeError, TypeError):
-            pr_json = None
-        else:
-            for pr in pr_rows:
-                name = pr.get("headRefName")
-                if not name or name == default_branch or name in pull_requests:
-                    continue
-                state = pull_request_status(pr)
-                colour = (
-                    green
-                    if state in {"approved", "merged"}
-                    else red
-                    if state == "changes requested"
-                    else yellow
-                    if state == "draft"
-                    else dim
-                    if state == "closed"
-                    else blue
-                )
-                number = pr.get("number")
-                pull_requests[name] = PullRequest(
-                    f"#{number} {state}",
-                    colour,
-                    number if isinstance(number, int) else None,
-                    str(pr.get("url", "")),
-                )
+    pr_ranks: dict[str, tuple[bool, int]] = {}
+    usable_rows = 0
+    for row in pr_rows:
+        name = row.get("headRefName")
+        number = row.get("number")
+        # bool is a subclass of int, so the number's type is compared exactly.
+        if not isinstance(name, str) or not name or type(number) is not int or number <= 0:
+            continue
+        usable_rows += 1
+        if name == default_branch:
+            continue
+        state = pull_request_status(row)
+        rank = (state in ACTIVE_PR_STATES, number)
+        if name in pr_ranks and pr_ranks[name] >= rank:
+            continue
+        colour = (
+            green
+            if state in {"approved", "merged"}
+            else red
+            if state == "changes requested"
+            else yellow
+            if state == "draft"
+            else dim
+            if state == "closed"
+            else blue
+        )
+        pr_ranks[name] = rank
+        pull_requests[name] = PullRequest(
+            f"#{number} {state}",
+            colour,
+            number,
+            str(row.get("url", "")),
+        )
+    if pr_rows and not usable_rows:
+        pr_reason = "unusable"
 
     current = command_output("git", "branch", "--show-current") or ""
     dirty = git_output("status", "--short", "--untracked-files=all")
@@ -450,7 +563,7 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         return max([len(heading), *(len(value) for value in values)]) + 2 + extra
 
     branch_heading = f"BRANCH ({len(branches)} local)"
-    show_pr = pr_json is not None
+    show_pr = pr_reason is None
     show_worktree = any(branch.worktree for branch in branches)
     pr_width = (
         max([len("PULL REQUEST"), *(len(branch.pull_request.text) for branch in branches)])
@@ -509,8 +622,10 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
 
     print()
     print(bold(repo_name) + dim(" :: ") + bold(current or "detached HEAD"))
-    joiner = " · " if use_symbols else " | "
-    worktree = yellow(f"dirty: {joiner.join(worktree_parts)}") if dirty_lines else green("clean")
+    separator = glyph["separator"]
+    worktree = (
+        yellow(f"dirty: {f' {separator} '.join(worktree_parts)}") if dirty_lines else green("clean")
+    )
     print(dim("worktree, ") + worktree)
     print(dim(glyph["rule"] * total_width))
     heading = (
@@ -520,7 +635,10 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     )
     if show_worktree:
         heading += pad("WORKTREE", columns["worktree"])
-    heading += pad("UPDATED", columns["updated"]) + "PULL REQUEST" if show_pr else "UPDATED"
+    if show_pr:
+        heading += pad("UPDATED", columns["updated"]) + "PULL REQUEST"
+    else:
+        heading += "UPDATED"
     print(dim(heading))
 
     for branch in branches:
@@ -528,36 +646,38 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
         name = fit(branch.name, columns["name"] - 3, glyph["ellipsis"])
         name_padding = " " * max(0, columns["name"] - len(marker) - len(name))
         updated = compact_age(branch.updated) if compact_dates else branch.updated
-        row = marker + paint_branch(name, branch.is_current) + name_padding
-        row += dim(
+        row_text = marker + paint_branch(name, branch.is_current) + name_padding
+        row_text += dim(
             pad(
                 fit(branch.remote, columns["remote"] - 2, glyph["ellipsis"]),
                 columns["remote"],
             )
         )
-        row += branch.state_colour(
+        row_text += branch.state_colour(
             pad(f"{branch.state_mark} {branch.state_text}", columns["state"])
         )
         if show_worktree:
             worktree_name = branch.worktree or "-"
-            row += dim(
+            row_text += dim(
                 pad(
                     fit(worktree_name, columns["worktree"] - 2, glyph["ellipsis"]),
                     columns["worktree"],
                 )
             )
         if show_pr:
-            row += dim(pad(updated, columns["updated"]))
+            row_text += dim(pad(updated, columns["updated"]))
             pr = branch.pull_request
             if pr.number is None:
                 rendered_pr = pr.text
             else:
-                number = f"#{pr.number}"
-                rendered_pr = hyperlink(number, pr.url, enabled=use_links) + pr.text[len(number) :]
-            row += pr.colour(rendered_pr)
+                number_text = f"#{pr.number}"
+                rendered_pr = (
+                    hyperlink(number_text, pr.url, enabled=use_links) + pr.text[len(number_text) :]
+                )
+            row_text += pr.colour(rendered_pr)
         else:
-            row += dim(updated)
-        print(row)
+            row_text += dim(updated)
+        print(row_text)
 
     print(dim(glyph["rule"] * total_width))
     linked_worktrees = [branch for branch in branches if branch.worktree_path]
@@ -587,16 +707,19 @@ def run_report(*, no_fetch: bool = False, plain: bool = False) -> int:
     if remote_gone:
         counts.append(f"{remote_gone} remote gone")
     if counts:
-        print(dim("  ·  ".join(counts)))
+        print(dim(f"  {separator}  ".join(counts)))
 
-    if not show_pr:
+    if fetch_failed:
         print()
-        notice = (
-            f"{glyph['notice']} Pull request state unknown - "
-            "the GitHub CLI is missing or not logged in."
-        )
-        print(yellow(notice))
-        print(yellow("  Install it from https://cli.github.com, then run: gh auth login"))
+        print(yellow(f"{glyph['notice']} Fetch failed - branch states may be out of date."))
+        print(yellow("  Check network access and remote configuration, or use --no-fetch."))
+
+    if pr_reason is not None:
+        notice_lines = PR_NOTICES[pr_reason]
+        print()
+        print(yellow(f"{glyph['notice']} {notice_lines[0]}"))
+        for extra_line in notice_lines[1:]:
+            print(yellow(extra_line))
     print()
     return 0
 
