@@ -196,7 +196,7 @@ def test_report_combines_worktree_branch_and_pr_state(
     assert "?? notes.txt" in captured.out
 
 
-def test_plain_output_is_pure_ascii(
+def test_plain_output_uses_ascii_interface_glyphs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -207,9 +207,27 @@ def test_plain_output_is_pure_ascii(
     assert cli.run_report(no_fetch=True, plain=True) == 0
 
     captured = capsys.readouterr()
-    assert captured.out.isascii(), "--plain must stay ASCII for logs and pipes"
+    assert captured.out.isascii(), "built-in plain-mode text should use ASCII glyphs"
     assert "\x1b[" not in captured.out
     assert "1 with unpushed commits  |  1 local only" in captured.out
+
+
+def test_plain_output_preserves_unicode_repository_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repository = make_repository(tmp_path)
+    run_git(repository, "branch", "café", "main")
+    monkeypatch.chdir(repository)
+    stub_gh(monkeypatch, gh_rows([]))
+
+    assert cli.run_report(no_fetch=True, plain=True) == 0
+
+    captured = capsys.readouterr()
+    assert "café" in captured.out
+    assert "\x1b[" not in captured.out
+    assert "·" not in captured.out
 
 
 def test_report_uses_symbols_and_color_when_color_is_forced(
@@ -428,6 +446,9 @@ def test_github_pull_requests_rejects_unexpected_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stub_gh(monkeypatch, (0, '{"not": "a list"}', ""))
+    assert cli.github_pull_requests() == ([], "unusable")
+
+    stub_gh(monkeypatch, (0, '[1, "invalid", null]', ""))
     assert cli.github_pull_requests() == ([], "unusable")
 
     stub_gh(monkeypatch, gh_rows([]))

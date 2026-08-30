@@ -4,9 +4,16 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-29
+
 ### Changed
 
 - Rich 15 is now an accepted runtime dependency; the report and its help render identically on 14 and 15.
+- `--plain` now explicitly promises ASCII interface glyphs rather than rewriting Unicode text from the repository.
+
+### Fixed
+
+- A successful GitHub CLI response containing a non-empty list with no object rows now reports unexpected data instead of appearing to contain no pull requests.
 
 ## [0.4.0] - 2026-08-29
 
@@ -28,7 +35,7 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 ### Fixed
 
-- `--plain` output is now pure ASCII; the summary line no longer emits a `·` separator.
+- `--plain` now uses ASCII for all built-in decorations; the summary line no longer emits a `·` separator.
 - `FORCE_COLOR` and `CLICOLOR_FORCE` now apply to redirected output on Windows, where console setup previously suppressed them.
 - Truncated branch and worktree names now fit their column exactly, instead of overflowing it by one cell whenever the ASCII ellipsis was used.
 
@@ -36,6 +43,7 @@ Notable changes to Git Muster. The format follows [Keep a Changelog](https://kee
 
 First public release: a one-shot branch report covering publication state, ahead/behind counts, linked worktrees, and optional GitHub pull-request status, published to PyPI with Trusted Publishing.
 
-[Unreleased]: https://github.com/olearydj/git-muster/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/olearydj/git-muster/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/olearydj/git-muster/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/olearydj/git-muster/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/olearydj/git-muster/releases/tag/v0.3.1

@@ -38,7 +38,7 @@ EPILOG = """
   Use the remote-tracking data already on disk.
 
   [cyan]git muster --plain[/cyan]
-  Emit stable ASCII output without color for logs and pipes.
+  Emit stable output with ASCII decorations and no color for logs and pipes.
 
 [bold]Linked worktrees[/bold]
 
@@ -315,7 +315,10 @@ def github_pull_requests() -> tuple[list[dict[str, object]], str | None]:
         return [], "unusable"
     if not isinstance(parsed, list):
         return [], "unusable"
-    return [row for row in parsed if isinstance(row, dict)], None
+    rows = [row for row in parsed if isinstance(row, dict)]
+    if parsed and not rows:
+        return [], "unusable"
+    return rows, None
 
 
 def parse_track(track: str) -> tuple[int, int] | None:
@@ -747,7 +750,10 @@ def main(
         bool,
         typer.Option(
             "--plain",
-            help="Disable color and Unicode symbols for stable logs and pipes.",
+            help=(
+                "Disable color, hyperlinks, and Unicode interface symbols for stable logs and "
+                "pipes. Repository-provided text is preserved."
+            ),
             rich_help_panel="Report options",
         ),
     ] = False,

@@ -33,7 +33,7 @@ BRANCH (4 local)      REMOTE  STATE          WORKTREE       UPDATED  PULL REQUES
 - Conditional linked-worktree names and checkout paths.
 - Draft, open, approved, changes-requested, merged, and closed GitHub pull requests.
 - Clickable, underlined PR numbers in supported interactive terminals.
-- Responsive terminal layout plus stable ASCII output for logs and pipes.
+- Responsive terminal layout plus stable plain output with ASCII interface glyphs for logs and pipes.
 - Read-only operation with `--no-fetch`; no branch switching, deletion, merging, rebasing, or pushing.
 
 ## Requirements
@@ -107,7 +107,7 @@ Color, Unicode symbols, and clickable pull-request numbers appear when the repor
 | `FORCE_COLOR`, `CLICOLOR_FORCE` | Keep color when output is redirected to a file or pipe. |
 | `COLUMNS` | Overrides the detected terminal width used to fit columns. |
 
-`--plain` overrides all of them and emits pure ASCII, without color or terminal hyperlinks. Git Muster also falls back to those ASCII glyphs on its own whenever the destination stream cannot encode its symbols, so redirected output never fails to encode.
+`--plain` overrides all of them and uses ASCII interface glyphs without color or terminal hyperlinks. Repository-provided text, including branch, remote, and worktree names, is preserved and may contain Unicode. Git Muster also falls back to the ASCII glyph set on its own whenever the destination stream cannot encode its symbols, so its built-in decorations never cause an encoding failure.
 
 ## Reading the report
 
